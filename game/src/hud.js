@@ -14,11 +14,13 @@ export function createHud() {
     banner: $('banner'), bannerTitle: $('banner-title'), bannerSub: $('banner-sub'),
     buy: $('buy'), buyMoney: $('buy-money'), grenadeCount: $('grenade-count'),
     chargeState: $('charge-state'), plantBar: $('plant-bar'), plantFill: $('plant-fill'),
+    plantLabel: $('plant-label'),
     match: $('match'), matchTitle: $('match-title'), matchScore: $('match-score'),
     restart: $('restart'), mute: $('mute'),
   };
   let hitTimer = 0;
   let bannerTimer = 0;
+  let lastBanner = null; // re-applied for screenshots before wall-clock timers fade it
   let last = {};
   let playHandler = null;
   let restartHandler = null;
@@ -70,7 +72,8 @@ export function createHud() {
       els.plantBar.hidden = progress <= 0;
       if (progress > 0) {
         els.plantFill.style.width = `${Math.min(100, progress * 100)}%`;
-        setText(els.plantFill, 'plabel', label);
+        // The label lives on the bar container, not inside the clipped fill.
+        setText(els.plantLabel, 'plabel', label || '');
       }
     },
     setCrosshair(spreadPx) {
@@ -102,11 +105,16 @@ export function createHud() {
       setTimeout(() => entry.remove(), 6000);
     },
     banner(title, sub, tone) {
+      lastBanner = { title, sub, tone };
       els.bannerTitle.textContent = title;
       els.bannerSub.textContent = sub || '';
       els.banner.className = `show tone-${tone || 'info'}`;
       clearTimeout(bannerTimer);
       bannerTimer = setTimeout(() => els.banner.classList.remove('show'), 3200);
+    },
+    // Re-show the last banner with a fresh timer (screenshot capture).
+    reassertBanner() {
+      if (lastBanner) this.banner(lastBanner.title, lastBanner.sub, lastBanner.tone);
     },
     showBuy(show) { els.buy.hidden = !show; },
     updateBuy(owned, money) {

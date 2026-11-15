@@ -30,6 +30,8 @@ export function createPlayer(colliders) {
     onGround: true,
     crouching: false,
     aiming: false,
+    ads: false, // right-mouse aim-down-sights, set by main.js each frame
+    recoil: 0, // pitch kick that decays back over ~0.3 s (see step)
     height: STAND_HEIGHT,
     alive: true,
     health: 100,
@@ -50,14 +52,18 @@ export function createPlayer(colliders) {
   }
 
   function recoil(pitchKick, yawKick) {
-    state.pitch = Math.min(1.45, state.pitch + pitchKick);
+    // Kick lands in a separate offset that decays in step(), so a full mag
+    // no longer climbs the pitch permanently — it recovers in ~0.3 s.
+    state.recoil = Math.min(0.5, state.recoil + pitchKick);
     state.yaw += yawKick;
   }
 
   function step(dt, keys) {
     if (!state.alive) return;
+    state.recoil *= Math.exp(-dt * 9);
+    if (state.recoil < 0.0005) state.recoil = 0;
     const crouching = keys.has('ControlLeft') || keys.has('ControlRight') || keys.has('KeyC');
-    state.aiming = keys.has('ShiftLeft') || keys.has('ShiftRight');
+    state.aiming = keys.has('ShiftLeft') || keys.has('ShiftRight') || state.ads;
     if (crouching && !state.crouching) {
       state.crouching = true;
       state.height = CROUCH_HEIGHT;

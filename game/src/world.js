@@ -10,25 +10,42 @@ import { PALETTE } from './palette.js';
 // Waypoints: id -> [x, z]; edges are the lanes bots actually walk.
 const WAYPOINTS = [
   [0, 15], [-4, 15], [4, 15], // 0-2 Barsha Guard spawn
-  [-14, 13], [-20, 8], [-20, 0], [-20, -6], // 3-6 A-long
+  [-14, 14], [-20, 8], [-20, 0], [-20, -6], // 3-6 A-long (3 sits south of
+  // the market-hall wall's end, so the lane turns the wall instead of
+  // crossing it)
   [-17, -9], [-13, -9], // 7-8 Site A
   [-6, 8], [-4, 2], [0, 0], [4, -2], [6, -8], // 9-13 mid
   [0, -12], // 14 mid top
-  [14, 13], [19, 8], [20, 0], [20, -6], // 15-18 B-tunnels
+  [14, 13], [19, 8], [20, 0], [19, -6.5], // 15-18 B-tunnels (18 sits east
+  // of the site-B sign pole so the lane does not clip it)
   [17, -9], [12, -9], // 19-20 Site B
   [0, -15], [-6, -15], [6, -15], // 21-23 Neon Reavers spawn
   [-12, -13], [12, -13], // 24-25 north connectors
   [-10, -6], [10, -4], // 26-27 site connectors
+  [-14, -2.5], // 28 market-hall gap: the only opening in the x=-14 wall
+  [15.5, -7.5], // 29 B-wall gap: the only opening between the two x=15.5 walls
+  [14, -7.5], // 30 west of the B wall, so the gap exit never runs along it
 ];
 const EDGES = [
   [0, 1], [0, 2], [1, 3], [2, 15], [0, 9], [2, 9],
-  [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 26],
-  [9, 10], [10, 11], [11, 12], [12, 13], [13, 14], [14, 26], [14, 27],
-  [15, 16], [16, 17], [17, 18], [18, 19], [19, 20], [20, 27],
+  [3, 4], [4, 5], [5, 6], [6, 7], [8, 26],
+  [9, 10], [10, 11], [11, 12], [12, 13], [13, 14], [14, 26], [14, 25],
+  [15, 16], [16, 17], [17, 18], [18, 19], [20, 27],
   [8, 24], [20, 25], [24, 21], [25, 21], [21, 22], [21, 23],
-  [22, 24], [23, 25], [24, 14], [25, 14], [26, 10], [27, 12],
-  [13, 27], [26, 7], [27, 19], [5, 10], [17, 12], [11, 9], [11, 13],
+  [22, 24], [23, 25], [24, 14], [25, 14], [11, 9], [11, 13],
+  [10, 28], [28, 5], [17, 29], [29, 30], [30, 20],
 ];
+// Every edge above is probe-verified: a bot walking the straight line
+// between its waypoints (0.34 m probe) hits no collider. Edges that failed
+// the probe were cut, because moveToward has no push-out and a bot whose
+// probe touches a wall face while its target lies beyond it wedges there:
+// 26-7 and 7-8 cross the x=-14 market-hall wall, 26-10 crosses the z=-4.5
+// hall wall, 5-10 crosses the x=-14 wall, 19-20 and 19-27 cross the B
+// wall at x=15.5, and 12/13/14-27 cross the mid container at (8,-6).
+// Site A is reached through the gap waypoint 28 and down A-long
+// (10-28-5-6-7); Site B is reached through the B-wall gap waypoint 29 and
+// the B-tunnels (14-25-20-29-17-18-19).
+// Node 27 is a spur off 20 since its mid approaches all cross the container.
 
 export const SITES = {
   A: { name: 'Site A', x: -17, z: -9, radius: 4.2 },
@@ -252,27 +269,27 @@ export function createWorld(scene) {
   box(0.5, 3.4, 16, 15.5, 1.7, 2, 'surface');
   box(9, 0.5, 16, 19.8, 3.4, 2, 'rust', false);
   box(0.5, 3.4, 6, 15.5, 1.7, -11, 'surface');
-  box(2.5, 2.5, 2.5, 20.5, 1.25, -3, 'containerBlue');
+  box(2.5, 2.5, 2.5, 22, 1.25, -3, 'containerBlue');
 
   // Crates, market stalls and cover scattered on the lanes.
   const crates = [
-    [-20, -1, 1.2], [-20, -11, 1.2], [-10, 10, 1.2], [10, 11, 1.2],
-    [-6, -8, 1.2], [2, -9, 1.2], [-13, -13, 1.2], [13, -13, 1.2],
+    [-22, -1, 1.2], [-20, -11, 1.2], [-10, 10, 1.2], [10, 11, 1.2],
+    [-6, -10, 1.2], [2, -9, 1.2], [-14.5, -13, 1.2], [13, -13, 1.2],
     [0, 7, 1.2], [-17, 2, 1.2], [14, -2, 1.2],
   ];
   for (const [x, z, s] of crates) box(s, s, s, x, s / 2, z, 'hairline');
-  box(1.2, 1.2, 1.2, -20, 1.8, -1, 'hairline');
+  box(1.2, 1.2, 1.2, -22, 1.8, -1, 'hairline');
   box(1.2, 1.2, 1.2, 10, 1.8, 11, 'hairline');
-  box(3.2, 1.1, 1.2, -2, 0.55, 11, 'hairline');
+  box(3.2, 1.1, 1.2, 2, 0.55, 11, 'hairline');
   box(3.2, 1.1, 1.2, -8, 0.55, -11, 'hairline');
-  box(1.2, 1.1, 3.2, 6, 0.55, -12, 'hairline');
+  box(1.2, 1.1, 3.2, 8, 0.55, 10, 'hairline');
 
   // Rickshaws parked as alley cover, and water drums.
   rickshaw(-8, 9, 0.4);
-  rickshaw(12, -1, -0.7);
+  rickshaw(12, 1.5, -0.7);
   rickshaw(-18, -4, 1.2);
   barrel(-18, 4); barrel(-18.9, 4.6); barrel(12, 9); barrel(12.9, 9.5);
-  barrel(-8, -3); barrel(16, 12); barrel(-22, -13); barrel(22, -13);
+  barrel(-8, -3); barrel(16, 14); barrel(-22, -13); barrel(22, -13);
 
   // Pipes along the walls.
   const pipeMat = materials.rust;
@@ -366,29 +383,42 @@ export function createWorld(scene) {
   const fill = new THREE.DirectionalLight(new THREE.Color('#ff9a5c'), 0.45);
   fill.position.set(18, 12, 16);
   scene.add(fill);
+  // Faint cool fill from the north: without it the north faces of the mid
+  // containers go near-black. main.js drives both fills with the blackout.
+  const fillNorth = new THREE.DirectionalLight(new THREE.Color('#7a8fc0'), 0.35);
+  fillNorth.position.set(-4, 14, -18);
+  scene.add(fillNorth);
   const lightning = new THREE.DirectionalLight(new THREE.Color('#eaf2ff'), 0);
   lightning.position.set(10, 30, -10);
   scene.add(lightning, lightning.target);
 
-  // Rain: one Points cloud of 1400 drops falling in a box around the camera.
-  // Positions live in one Float32Array; the update wraps drops to the top.
+  // Rain: 1400 short vertical streaks (LineSegments) falling in a box
+  // around the camera — points rendered as pale squares before this.
+  // Two vertices per drop; the update moves the pair and wraps it to the top.
   const RAIN_COUNT = 1400;
-  const rainPos = new Float32Array(RAIN_COUNT * 3);
+  const STREAK = 0.45;
+  const rainPos = new Float32Array(RAIN_COUNT * 6);
   const rainSpeed = new Float32Array(RAIN_COUNT);
   for (let i = 0; i < RAIN_COUNT; i += 1) {
-    rainPos[i * 3] = (Math.random() * 2 - 1) * 20;
-    rainPos[i * 3 + 1] = Math.random() * 18;
-    rainPos[i * 3 + 2] = (Math.random() * 2 - 1) * 20;
+    const x = (Math.random() * 2 - 1) * 20;
+    const y = Math.random() * 18;
+    const z = (Math.random() * 2 - 1) * 20;
+    rainPos[i * 6] = x;
+    rainPos[i * 6 + 1] = y;
+    rainPos[i * 6 + 2] = z;
+    rainPos[i * 6 + 3] = x;
+    rainPos[i * 6 + 4] = y - STREAK;
+    rainPos[i * 6 + 5] = z;
     rainSpeed[i] = 14 + Math.random() * 10;
   }
   const rainGeo = new THREE.BufferGeometry();
   rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
-  const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({
-    color: new THREE.Color('#9db8d8'), size: 0.045, transparent: true, opacity: 0.4, sizeAttenuation: true,
+  const rain = new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({
+    color: new THREE.Color('#9db8d8'), transparent: true, opacity: 0.35,
   }));
   rain.frustumCulled = false;
   scene.add(rain);
-  const rainState = { count: RAIN_COUNT, speed: rainSpeed, positions: rainPos, points: rain };
+  const rainState = { count: RAIN_COUNT, speed: rainSpeed, positions: rainPos, points: rain, streak: STREAK };
 
   // Waypoint graph: adjacency lists built once from EDGES.
   const adjacency = WAYPOINTS.map(() => []);
@@ -399,7 +429,7 @@ export function createWorld(scene) {
 
   return {
     colliders, shootables, group, waypoints: WAYPOINTS, adjacency,
-    hemi, moon, fill, lightning, lampLight1, lampLight2, lamps, rain: rainState,
+    hemi, moon, fill, fillNorth, lightning, lampLight1, lampLight2, lamps, lampMat, rain: rainState,
   };
 }
 
@@ -407,11 +437,12 @@ export function createWorld(scene) {
 // at the top of the box, so the storm never runs out of rain. The cloud's
 // object position follows the camera, so the storm follows the player.
 export function updateRain(world, camera, dt) {
-  const { positions, speed, count, points } = world.rain;
+  const { positions, speed, count, points, streak } = world.rain;
   for (let i = 0; i < count; i += 1) {
-    let y = positions[i * 3 + 1] - speed[i] * dt;
+    let y = positions[i * 6 + 1] - speed[i] * dt;
     if (y < 0) y += 18;
-    positions[i * 3 + 1] = y;
+    positions[i * 6 + 1] = y;
+    positions[i * 6 + 4] = y - streak;
   }
   points.geometry.attributes.position.needsUpdate = true;
   points.position.set(camera.position.x, 0, camera.position.z);

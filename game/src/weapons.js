@@ -35,23 +35,30 @@ const MUZZLE_TIME = 0.06;
 const BLOOM_PER_SHOT = 0.0045;
 const BLOOM_DECAY = 0.09;
 
-// A boxy view model built from the weapon's kind: long barrel for the marksman,
-// short and stubby for the SMG. Rebuilt on buy, never during a frame.
+// A slim two-tone view model built from the weapon's kind: long barrel for
+// the marksman, short and stubby for the SMG. Rebuilt on buy, never during
+// a frame. Slim receiver + grip + magazine so it reads as a gun, not a plank.
 function buildModel(def) {
   const dark = new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.hairline), roughness: 0.65, metalness: 0.25 });
   const metal = new THREE.MeshStandardMaterial({ color: new THREE.Color('#454d59'), roughness: 0.45, metalness: 0.45 });
   const accent = new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.accent), roughness: 0.5, metalness: 0.2 });
   const model = new THREE.Group();
   const barrelLen = def.kind === 'marksman' ? 0.62 : def.kind === 'smg' ? 0.22 : def.kind === 'pistol' ? 0.16 : 0.4;
-  const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.1, 0.4), metal);
-  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, barrelLen), dark);
-  barrel.position.set(0, 0.025, -0.2 - barrelLen / 2);
-  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.08, 0.22), dark);
-  stock.position.set(0, -0.02, 0.3);
-  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.04, 0.06), accent);
-  sight.position.set(0, 0.07, -0.05);
-  model.add(receiver, barrel, stock, sight);
-  model.userData.muzzleZ = -0.2 - barrelLen;
+  const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.08, 0.36), metal);
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, barrelLen), dark);
+  barrel.position.set(0, 0.02, -0.18 - barrelLen / 2);
+  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.07, 0.2), dark);
+  stock.position.set(0, -0.015, 0.27);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.11, 0.06), dark);
+  grip.position.set(0, -0.09, 0.08);
+  grip.rotation.x = 0.35;
+  const mag = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.1, 0.07), dark);
+  mag.position.set(0, -0.08, -0.08);
+  mag.rotation.x = -0.12;
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.035, 0.05), accent);
+  sight.position.set(0, 0.058, -0.05);
+  model.add(receiver, barrel, stock, grip, mag, sight);
+  model.userData.muzzleZ = -0.18 - barrelLen;
   // Canted slightly, like a held rifle, so the view model reads as a gun
   // instead of a plank.
   model.rotation.y = 0.18;
@@ -79,9 +86,16 @@ export function createWeapon(camera) {
     def: WEAPONS.megh7, mag: WEAPONS.megh7.mag, reserve: WEAPONS.megh7.reserve,
     cooldown: 0, reloadLeft: 0, flash: 0, kick: 0, bloom: 0,
     grenades: 0,
+    primary: WEAPONS.megh7, // the bought gun; the P9 is a permanent secondary
+    ammoById: {}, // per-weapon mag/reserve, so switching keeps each gun's ammo
+    adsT: 0, // 0 hipfire → 1 aimed: the view model rises toward centre
+    adsTarget: false,
   };
 
   function equip(def) {
+    // Stash the outgoing gun's ammo before swapping the model.
+    if (state.def) state.ammoById[state.def.id] = { mag: state.mag, reserve: state.reserve };
+    if (def.kind !== 'pistol') state.primary = def;
     if (model) {
       modelHolder.remove(model);
       model.traverse((child) => {
@@ -93,8 +107,9 @@ export function createWeapon(camera) {
       });
     }
     state.def = def;
-    state.mag = def.mag;
-    state.reserve = def.reserve;
+    const saved = state.ammoById[def.id];
+    state.mag = saved ? saved.mag : def.mag;
+    state.reserve = saved ? saved.reserve : def.reserve;
     state.cooldown = 0;
     state.reloadLeft = 0;
     state.flash = 0;
@@ -112,7 +127,11 @@ export function createWeapon(camera) {
     state.flash = Math.max(0, state.flash - dt);
     state.bloom = Math.max(0, state.bloom - BLOOM_DECAY * dt);
     state.kick += (0 - state.kick) * Math.min(1, dt * 14);
+    state.adsT += ((state.adsTarget ? 1 : 0) - state.adsT) * Math.min(1, dt * 12);
     if (model) {
+      // Aiming raises the gun toward the centre of the screen.
+      model.position.x = 0.26 - state.adsT * 0.13;
+      model.position.y = -0.26 + state.adsT * 0.09;
       model.position.z = -0.5 + state.kick;
       model.rotation.x = state.kick * 2.2;
       if (state.reloadLeft > 0) {
@@ -137,6 +156,11 @@ export function createWeapon(camera) {
     state,
     step,
     equip,
+    // Q / scroll swaps between the bought gun and the permanent P9 sidearm.
+    toggleSecondary() {
+      equip(state.def.id === 'p9' ? state.primary : WEAPONS.p9);
+    },
+    setAds(aiming) { state.adsTarget = aiming; },
     muzzleWorld(out) {
       // World position of the barrel tip, for tracers.
       if (!model) return camera.getWorldPosition(out);
@@ -162,14 +186,16 @@ export function createWeapon(camera) {
       state.reloadLeft = state.def.reloadTime;
       return true;
     },
-    spread(speed, crouching, aiming) {
+    spread(speed, crouching, aiming, ads = false) {
       const move = Math.min(1, speed / 5.4);
       let spread = state.def.spreadStill + move * state.def.spreadMove + state.bloom;
       if (crouching) spread *= 0.7;
       if (aiming) spread *= 0.6;
+      if (ads) spread *= 0.7; // right-mouse ADS tightens further
       return spread;
     },
     refill() {
+      state.ammoById = {};
       equip(state.def);
       state.grenades = 0;
     },

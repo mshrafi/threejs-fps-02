@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Monsoon Strike — a three.js tactical FPS</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2312141f'/%3E%3Ctext x='16' y='23' font-size='20' font-family='sans-serif' font-weight='bold' text-anchor='middle' fill='%23f0a832'%3EM%3C/text%3E%3C/svg%3E">
 <style>
   :root {
     --canvas: #171a21;
@@ -84,6 +85,7 @@
   #plant-bar { position: fixed; left: 50%; top: 58%; width: 220px; transform: translateX(-50%); height: 10px; background: var(--hairline); border-radius: 3px; overflow: hidden; }
   #plant-bar[hidden] { display: none; }
   #plant-fill { height: 100%; width: 0; background: var(--accent); }
+  #plant-label { position: fixed; left: 50%; top: calc(58% - 22px); transform: translateX(-50%); font-size: 12px; letter-spacing: .14em; color: var(--accent); }
 
   /* Round banner. */
   #banner { position: fixed; left: 50%; top: 26%; transform: translate(-50%, -8px); text-align: center; opacity: 0; transition: opacity 200ms, transform 200ms; }
@@ -151,6 +153,7 @@
     <div id="grenade-count">GRENADES 0</div>
   </div>
   <div id="plant-bar" hidden><div id="plant-fill"></div></div>
+  <div id="plant-label"></div>
   <div id="banner"><div id="banner-title"></div><div id="banner-sub"></div></div>
   <div id="buy" hidden>
     <h2>BUY — ROUND <span id="buy-round">1</span></h2>
@@ -173,6 +176,7 @@
       <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move · <kbd>Shift</kbd> Walk / aim · <kbd>Ctrl</kbd> Crouch · <kbd>Space</kbd> Jump</li>
       <li><kbd>Mouse</kbd> Look · <kbd>Click</kbd> Fire · <kbd>R</kbd> Reload</li>
       <li><kbd>B</kbd> Buy menu · <kbd>1</kbd>–<kbd>5</kbd> Buy · <kbd>G</kbd> Throw grenade</li>
+      <li><kbd>Q</kbd> / scroll Swap to P9 sidearm · <kbd>Right mouse</kbd> Aim down sights</li>
       <li><kbd>E</kbd> Plant charge (hold, at a site) · <kbd>M</kbd> Mute</li>
     </ul>
   </section>

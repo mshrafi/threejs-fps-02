@@ -55,11 +55,45 @@ Desktop Chrome, no network needed — three.js is vendored under `game/vendor/`.
 | --- | --- |
 | Mouse | Look |
 | Click | Fire |
+| Right mouse | Aim down sights (tighter spread, narrower FOV, raised gun) |
 | R | Reload |
+| Q / scroll wheel | Swap between the bought gun and the P9 sidearm (permanent secondary) |
 | B, then 1–5 | Buy menu / buy weapon or grenade |
 | G | Throw grenade |
 | E (hold) | Plant the charge at a site |
 | M | Mute |
+
+## v2 changes
+
+- **Bots actually play the map:** sight range cut from 42 m to 26 m and bots
+  must leave their spawn third before they can engage, so routes, flanks and
+  site holds run instead of every bot fighting from spawn. The charge carrier
+  pushes its site instead of chasing distant gunfire. Bot accuracy and damage
+  fall off at long range, so the opening crossfire no longer melts the player.
+- **Waypoint graph probe-verified:** every graph edge was checked against the
+  map's colliders with the bots' own 0.34 m probe; edges that crossed walls
+  (and wedged bots, since the mover has no push-out) were cut or rerouted
+  through two new gap waypoints, and the obstacles that clipped the rest were
+  moved. All 40 edges are now clean and the graph is fully connected.
+- **Gunplay:** recoil now decays back over ~0.3 s instead of climbing the
+  pitch permanently; right-mouse aim-down-sights halves the field of view and
+  tightens spread; the P9 is a permanent secondary (Q / scroll) with
+  per-weapon ammo, and re-buying the equipped gun is a no-op instead of
+  charging full price. The player's own gun finally makes sound.
+- **Round flow:** the player can move during the buy phase, and the buy menu
+  closes itself when the round goes live (B/Esc close it any time). Death
+  now shows an elimination banner and kill-feed line, exits pointer lock and
+  opens the down overlay immediately.
+- **Look:** bots are slimmer with a dark visor and no ground ring; the view
+  model is slimmer with a grip, magazine and second tone; rain renders as
+  streaks instead of pale squares; a cool fill light keeps the mid
+  containers' north faces out of near-black.
+- **Code:** dead code removed (unused bot reset, unread round-result fields);
+  spawn coordinates now live in one place (`SPAWNS`); the defuse beep, lamp
+  and fill lights are actually driven; per-shot and per-scan allocations were
+  hoisted to reused scratch (ray targets, enemy lists, BFS scratch, look
+  vector); the plant label moved out of its clipped bar, and the page has an
+  inline SVG favicon instead of a 404.
 
 ## Screenshots
 

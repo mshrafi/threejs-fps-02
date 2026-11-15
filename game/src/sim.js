@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { WEAPONS, GRENADE_PRICE, GRENADE_FUSE, GRENADE_RADIUS, GRENADE_DAMAGE } from './weapons.js';
-import { SITES } from './world.js';
+import { SITES, SPAWNS } from './world.js';
 
 const ROUND_TIME = 100;
 const BUY_TIME = 8;
@@ -22,6 +22,9 @@ const _dir = new THREE.Vector3();
 const _from = new THREE.Vector3();
 const _to = new THREE.Vector3();
 const _eye = new THREE.Vector3();
+// Reused ray target list: shootables plus live bot hitboxes, rebuilt per
+// shot without a concat allocation.
+const _targets = [];
 
 export function createSim({ scene, camera, world, player, weapon, bots, audio, rng }) {
   const raycaster = new THREE.Raycaster();
@@ -98,8 +101,6 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     charge: { carrier: 'player', planted: false, x: 0, z: 0, site: null, timer: CHARGE_TIMER, beep: 0 },
     plantProgress: 0,
     playerKills: 0,
-    winner: null,
-    winReason: '',
     shake: 0,
     time: 0,
     // Monsoon twist: lightning strikes cut the street lights for a few
@@ -131,7 +132,7 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     return _eye;
   }
 
-  function damagePlayer(amount, fromPos) {
+  function damagePlayer(amount, fromPos, killer = 'the enemy') {
     if (!player.state.alive || state.phase !== 'live') return;
     player.state.health -= amount;
     audio.hurt();
@@ -143,7 +144,7 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     if (player.state.health <= 0) {
       player.state.health = 0;
       player.state.alive = false;
-      emit({ type: 'died' });
+      emit({ type: 'died', killer });
       dropCharge();
       checkRoundEnd();
     }
@@ -225,7 +226,7 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
       audio.dryFire();
       return;
     }
-    const spread = weapon.spread(player.groundSpeed(), player.state.crouching, player.state.aiming);
+    const spread = weapon.spread(player.groundSpeed(), player.state.crouching, player.state.aiming, player.state.ads);
     camera.getWorldDirection(_dir);
     _dir.x += (rng() * 2 - 1) * spread;
     _dir.y += (rng() * 2 - 1) * spread;
@@ -236,12 +237,12 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     scene.updateMatrixWorld(true);
     raycaster.set(camera.position, _dir);
     raycaster.far = def.range;
-    const shootables = world.shootables;
-    const botMeshes = [];
+    _targets.length = 0;
+    for (const s of world.shootables) _targets.push(s);
     for (const bot of bots.list) {
-      if (bot.alive) botMeshes.push(bot.headMesh, bot.torsoMesh);
+      if (bot.alive) _targets.push(bot.headMesh, bot.torsoMesh);
     }
-    const hits = raycaster.intersectObjects(shootables.concat(botMeshes), false);
+    const hits = raycaster.intersectObjects(_targets, false);
     // First hit that counts: world geometry, or an enemy bot. Teammates are
     // never valid targets — a shot through a teammate keeps flying.
     let hit = null;
@@ -273,6 +274,7 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
       tracer(muzzle, _to);
     }
     weapon.pullTrigger();
+    audio.shot(def.kind); // the player's own gun was silent before this
     player.recoil(def.kick * (0.8 + rng() * 0.4), (rng() * 2 - 1) * def.kick * 0.35);
     state.shake = Math.max(state.shake, def.kind === 'marksman' ? 0.35 : 0.12);
     bots.hearShot(player.state.position, state.time);
@@ -291,6 +293,9 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     if (target.kind === 'player' && player.groundSpeed() > 2) chance -= 0.1;
     if (bot.state === 'engage' && bot.burstLeft > 0) chance += 0.05;
     if (state.blackout.active) chance -= 0.08; // bots shoot worse in the dark
+    // Long-range crossfire melted the player in the opening seconds, so
+    // accuracy falls off hard past 15 m against the player.
+    if (target.kind === 'player') chance -= Math.max(0, dist - 15) * 0.012;
     chance = Math.max(0.05, Math.min(0.7, chance));
     tracer(from, _to, bot.team === 'reaver' ? 0xff7a5c : 0x7adfff);
     audio.shot('bot');
@@ -299,9 +304,9 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
       // Focused bot fire would melt the player in seconds, so hits on the
       // player deal a little over half damage; bot-on-bot damage is full.
       let damage = 8 + rng() * 7;
-      if (target.kind === 'player') damage *= 0.55;
+      if (target.kind === 'player') damage *= 0.55 * (dist > 18 ? 0.7 : 1);
       if (target.kind === 'player') {
-        damagePlayer(damage, from);
+        damagePlayer(damage, from, bot.name);
       } else {
         const killed = damageBot(target.bot, damage, bot);
         if (killed) killfeed(bot.name, target.bot.name, false, bot.team);
@@ -346,7 +351,7 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
       const d = Math.hypot(v.pos.x - pos.x, v.pos.z - pos.z);
       if (d < GRENADE_RADIUS) {
         const damage = GRENADE_DAMAGE * (1 - d / GRENADE_RADIUS) + 15;
-        if (v.kind === 'player') damagePlayer(damage, pos);
+        if (v.kind === 'player') damagePlayer(damage, pos, 'a Spark grenade');
         else {
           const killed = damageBot(v.bot, damage, 'player');
           if (killed) {
@@ -402,8 +407,6 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     if (state.phase === 'roundOver' || state.phase === 'matchOver') return;
     state.phase = 'roundOver';
     state.phaseTime = 0;
-    state.winner = winner;
-    state.winReason = reason;
     state.score[winner] += 1;
     const playerWon = winner === 'sentinel';
     state.money += playerWon ? WIN_REWARD : LOSS_REWARD;
@@ -443,7 +446,7 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     chargeLight.intensity = 0;
     player.state.alive = true;
     player.state.health = 100;
-    player.state.position.set(0, 0, 15.5);
+    player.state.position.set(SPAWNS.sentinel[1][0], 0, SPAWNS.sentinel[1][1]);
     player.state.velocity.set(0, 0, 0);
     player.state.yaw = 0;
     player.state.pitch = 0;
@@ -468,6 +471,9 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     }
     const def = WEAPONS[id];
     if (!def || state.money < def.price) { audio.deny(); return false; }
+    // Re-buying the equipped gun used to charge full price for ammo the
+    // next round refills free. Now it is a no-op: you already own it.
+    if (def.id === weapon.state.def.id) { audio.deny(); return false; }
     state.money -= def.price;
     weapon.equip(def);
     audio.buy();
@@ -480,8 +486,9 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     time: 0,
     charge: state.charge,
     los,
-    enemiesOf(bot) {
-      const out = [];
+    enemiesOf(bot, out) {
+      // Fills the caller's scratch array instead of allocating per scan.
+      out.length = 0;
       if (bot.team === 'reaver') {
         if (player.state.alive) out.push({ kind: 'player', x: player.state.position.x, y: player.state.position.y + player.state.eye, z: player.state.position.z });
         for (const other of bots.list) {
@@ -495,6 +502,7 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
       return out;
     },
     botShoot,
+    defuseBeep() { audio.defuseBeep(); },
     onPlanted,
     onDefused,
     onCallout(text, team) {
@@ -666,8 +674,6 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     state.round = 1;
     state.money = 800;
     state.playerKills = 0;
-    state.winner = null;
-    state.winReason = '';
     weapon.equip(WEAPONS.megh7);
     startRound();
   }

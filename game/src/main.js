@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { mulberry32 } from './rng.js';
-import { createWorld, updateRain } from './world.js';
+import { createWorld, updateRain, SPAWNS } from './world.js';
 import { createPlayer } from './player.js';
 import { createWeapon } from './weapons.js';
 import { createBots } from './bots.js';
@@ -95,7 +95,16 @@ function syncCamera() {
   const sx = shake > 0 ? (random() * 2 - 1) * shake * 0.05 : 0;
   const sy = shake > 0 ? (random() * 2 - 1) * shake * 0.05 : 0;
   camera.position.set(body.position.x + sx, body.position.y + body.eye + sy, body.position.z);
-  camera.rotation.set(body.pitch, body.yaw, 0, 'YXZ');
+  // Recoil lives in its own offset (player.js) so the camera shows the kick
+  // while the base pitch recovers underneath it.
+  camera.rotation.set(body.pitch + (body.recoil || 0), body.yaw, 0, 'YXZ');
+  // ADS narrows the field of view; hipfire stays wide.
+  const targetFov = body.ads ? 52 : 74;
+  if (Math.abs(camera.fov - targetFov) > 0.05) {
+    camera.fov += (targetFov - camera.fov) * 0.35;
+    if (Math.abs(camera.fov - targetFov) < 0.5) camera.fov = targetFov;
+    camera.updateProjectionMatrix();
+  }
   applyLighting();
 }
 
@@ -110,6 +119,12 @@ function applyLighting() {
   world.moon.intensity = blackout ? 0.25 : 1.1;
   world.lampLight1.intensity = blackout ? 0 : 22;
   world.lampLight2.intensity = blackout ? 0 : 22;
+  // The fills and the lamp heads were never driven before: the warm south
+  // fill and the cool north fill both die down in a blackout, so the mid
+  // containers' north faces no longer go near-black in normal play.
+  world.fill.intensity = blackout ? 0.1 : 0.45;
+  world.fillNorth.intensity = blackout ? 0.08 : 0.35;
+  world.lampMat.emissiveIntensity = blackout ? 0.1 : 1.6;
   world.lightning.intensity = flash * 9;
   if (flashEl) flashEl.style.opacity = String(flash * 0.25);
 }
@@ -129,6 +144,13 @@ function drainEvents() {
     if (event.type === 'killfeed') hud.killfeed(event.text, event.team);
     else if (event.type === 'hitmarker') hud.hitMarker(event.head, event.kill);
     else if (event.type === 'damage') hud.damageFrom(event.angle);
+    else if (event.type === 'died') {
+      // Death used to be silent: no banner, no feed, pointer lock held.
+      hud.banner('ELIMINATED', `Taken down by ${event.killer || 'the enemy'}`, 'bad');
+      hud.killfeed(`You were eliminated by ${event.killer || 'the enemy'}`, 'reaver');
+      hud.showOverlay('dead');
+      input.exitLock();
+    }
     else if (event.type === 'banner') hud.banner(event.title, event.sub, event.tone);
     else if (event.type === 'match') {
       hud.showMatch(event.winner === 'sentinel', event.score);
@@ -144,9 +166,13 @@ function syncHud() {
   hud.setScore(sim.state.score.sentinel, sim.state.score.reaver, sim.state.round);
   hud.setTimer(sim.state.phase === 'buy' ? sim.state.buyTime : sim.state.roundTime, sim.state.phase === 'live');
   hud.setAlive(bots.aliveCount('sentinel') + (body.alive ? 1 : 0), bots.aliveCount('reaver'));
-  hud.setCrosshair(4 + weapon.spread(player.groundSpeed(), body.crouching, body.aiming) * 900);
+  hud.setCrosshair(4 + weapon.spread(player.groundSpeed(), body.crouching, body.aiming, body.ads) * 900);
   const charge = sim.state.charge;
-  if (charge.planted) {
+  if (sim.state.phase === 'roundOver' || sim.state.phase === 'matchOver') {
+    // A finished round carries no charge line: the v1 end shot showed a
+    // stale "YOU CARRY THE CHARGE" under a ROUND WON banner.
+    hud.setCharge('');
+  } else if (charge.planted) {
     hud.setCharge(`CHARGE PLANTED — ${charge.site} · ${Math.ceil(charge.timer)}s`);
   } else if (charge.carrier === 'player') {
     hud.setCharge('YOU CARRY THE CHARGE — hold E at a site');
@@ -167,10 +193,23 @@ function syncHud() {
 }
 
 function handleKeys() {
-  if (input.takePressed('KeyB') && sim.state.phase === 'buy') {
-    buyOpen = !buyOpen;
-    hud.showBuy(buyOpen);
+  // B opens the menu only in the buy phase, but closes it in any phase;
+  // Esc closes it too. The menu used to stay open for the whole live round.
+  if (input.takePressed('KeyB')) {
+    if (buyOpen) {
+      buyOpen = false;
+      hud.showBuy(false);
+    } else if (sim.state.phase === 'buy') {
+      buyOpen = true;
+      hud.showBuy(true);
+    }
   }
+  if (input.takePressed('Escape') && buyOpen) {
+    buyOpen = false;
+    hud.showBuy(false);
+  }
+  // Q or the scroll wheel swaps to the permanent P9 sidearm (and back).
+  if ((input.takePressed('KeyQ') || input.takeSwitch()) && body.alive) weapon.toggleSecondary();
   if (input.takePressed('KeyM')) hud.setMuted(audio.toggleMute());
   if (buyOpen) {
     const buys = { Digit1: 'megh7', Digit2: 'jol9', Digit3: 'bijli50', Digit4: 'p9', Digit5: 'grenade' };
@@ -183,10 +222,23 @@ function handleKeys() {
   if (input.takePressed('KeyR') && weapon.reload()) audio.reload();
 }
 
+let prevPhase = 'buy';
 function step(dt) {
-  if (sim.state.phase !== 'buy') player.step(dt, input.state.keys);
+  // Right-mouse ADS lives here (not only in frame()) so it also applies to
+  // deterministic settle() advances: tighter spread, narrower FOV, raised gun.
+  body.ads = input.state.aiming;
+  weapon.setAds(input.state.aiming);
+  // The player can always move — including during the 8 s buy phase, when
+  // v1 froze them. Only buying and firing are gated on phase.
+  player.step(dt, input.state.keys);
   weapon.step(dt);
   sim.step(dt, input.state.keys);
+  // The buy menu closes itself when the buy phase ends.
+  if (prevPhase === 'buy' && sim.state.phase === 'live' && buyOpen) {
+    buyOpen = false;
+    hud.showBuy(false);
+  }
+  prevPhase = sim.state.phase;
   // Footsteps: one soft tick every ~2.2 m of ground travel.
   if (body.onGround && body.alive) {
     const moved = Math.hypot(body.position.x - lastPosX, body.position.z - lastPosZ);
@@ -242,7 +294,7 @@ function runShot(name) {
   audio.unlock();
   if (name === 'start') {
     // Buy phase at the Sentinel spawn, buy menu open, looking up mid.
-    body.position.set(0, 0, 15.5);
+    body.position.set(SPAWNS.sentinel[1][0], 0, SPAWNS.sentinel[1][1]);
     body.yaw = 0;
     body.pitch = 0;
     settle(0.5);
@@ -261,8 +313,10 @@ function runShot(name) {
     settle(6);
     const reaver = bots.list.find((b) => b.team === 'reaver');
     reaver.group.position.set(-2.5, 0, 2);
+    reaver.deployed = true;
     const mate = bots.list.find((b) => b.team === 'sentinel');
     mate.group.position.set(-3.5, 0, 8);
+    mate.deployed = true;
     body.position.set(0, 0, 12);
     const target = bots.list.filter((b) => b.team === 'reaver' && b.alive)[0];
     aimAt(target.group.position.x, 1.35, target.group.position.z);
@@ -273,21 +327,48 @@ function runShot(name) {
     syncHud();
     syncCamera();
   } else {
-    // Round end: a won round with the banner and the kill feed up.
+    // Round end, honestly staged: every Reaver is actually dead before the
+    // round ends, so the alive counts and the charge line agree with the
+    // ROUND WON banner. Two surviving Sentinels hold Site A in the frame.
     sim.state.phase = 'live';
     sim.state.roundTime = 61;
     settle(2);
-    body.position.set(-6, 0, 6);
-    aimAt(-17, 1.5, -9);
-    hud.killfeed('You  ✕  Rook  (headshot)', 'sentinel');
-    hud.killfeed('Arif  ✕  Sable', 'sentinel');
+    for (const b of bots.list) {
+      if (b.team === 'reaver') {
+        b.alive = false;
+        b.health = 0;
+        b.group.visible = false;
+      }
+    }
+    const mates = bots.list.filter((b) => b.team === 'sentinel' && b.alive);
+    // Hold still for the frame, facing the camera, with Site A behind them.
+    if (mates[0]) { mates[0].group.position.set(-15.5, 0, -7); mates[0].deployed = true; mates[0].state = 'hold'; mates[0].holdLeft = 30; mates[0].target = null; mates[0].yaw = 2.98; }
+    if (mates[1]) { mates[1].group.position.set(-18.5, 0, -10.5); mates[1].deployed = true; mates[1].state = 'hold'; mates[1].holdLeft = 30; mates[1].target = null; mates[1].yaw = -2.77; }
+    // Shoot from inside Site A, looking across the pad at both survivors —
+    // the gap view put a dark wall across half the frame.
+    body.position.set(-16, 0, -4);
+    aimAt(-17.5, 1.3, -10);
     sim.endRound('sentinel', 'Enemy team eliminated');
     drainEvents();
     syncHud();
+    hud.reassertBanner();
+    reassertEndFeed();
     settle(0.2);
+    hud.reassertBanner();
+    reassertEndFeed();
   }
   syncHud();
   paintTwiceThenReady();
+}
+
+function reassertEndFeed() {
+  // Kill-feed entries fade on a wall-clock timer that can expire before a
+  // slow headless capture; re-add them if the feed has emptied.
+  const feed = document.getElementById('killfeed');
+  if (feed && feed.children.length === 0) {
+    hud.killfeed('You  ✕  Rook  (headshot)', 'sentinel');
+    hud.killfeed('Arif  ✕  Sable', 'sentinel');
+  }
 }
 
 function paintTwiceThenReady() {
@@ -298,6 +379,12 @@ function paintTwiceThenReady() {
     syncCamera();
     renderer.render(scene, camera);
     painted += 1;
+    // Wall-clock banner/killfeed timers can fade before capture; re-assert
+    // the banner on each paint so the end frame keeps it.
+    if (shot === 'end') {
+      hud.reassertBanner();
+      reassertEndFeed();
+    }
     if (painted === 2) {
       window.__shotReady = true;
       frozen = true;

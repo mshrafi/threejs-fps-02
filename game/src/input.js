@@ -4,7 +4,9 @@
 export function createInput(canvas, onLockChange) {
   const keys = new Set();
   const pressed = new Set();
-  const state = { keys, locked: false, firing: false, lookX: 0, lookY: 0 };
+  const state = { keys, locked: false, firing: false, aiming: false, lookX: 0, lookY: 0 };
+  const lookOut = { x: 0, y: 0 }; // reused: takeLook allocates nothing per frame
+  let switchQueued = false;
 
   function setKey(event, down) {
     if (down) {
@@ -21,6 +23,7 @@ export function createInput(canvas, onLockChange) {
   window.addEventListener('blur', () => {
     keys.clear();
     state.firing = false;
+    state.aiming = false;
   });
   window.addEventListener('mousemove', (event) => {
     if (!state.locked) return;
@@ -29,15 +32,21 @@ export function createInput(canvas, onLockChange) {
   });
   window.addEventListener('mousedown', (event) => {
     if (state.locked && event.button === 0) state.firing = true;
+    if (state.locked && event.button === 2) state.aiming = true; // ADS
   });
   window.addEventListener('mouseup', (event) => {
     if (event.button === 0) state.firing = false;
+    if (event.button === 2) state.aiming = false;
   });
+  // Right-click aim and the scroll wheel never open a browser menu / scroll.
+  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+  window.addEventListener('wheel', () => { if (state.locked) switchQueued = true; }, { passive: true });
   document.addEventListener('pointerlockchange', () => {
     state.locked = document.pointerLockElement === canvas;
     if (!state.locked) {
       keys.clear();
       state.firing = false;
+      state.aiming = false;
     }
     onLockChange(state.locked);
   });
@@ -47,11 +56,11 @@ export function createInput(canvas, onLockChange) {
     requestLock() { canvas.requestPointerLock(); },
     exitLock() { if (document.pointerLockElement) document.exitPointerLock(); },
     takeLook() {
-      const x = state.lookX;
-      const y = state.lookY;
+      lookOut.x = state.lookX;
+      lookOut.y = state.lookY;
       state.lookX = 0;
       state.lookY = 0;
-      return { x, y };
+      return lookOut;
     },
     // True once for each physical press; main drains it every frame.
     takePressed(code) {
@@ -62,5 +71,11 @@ export function createInput(canvas, onLockChange) {
       return false;
     },
     clearPressed() { pressed.clear(); },
+    // True once per scroll-wheel tick while locked (weapon switch).
+    takeSwitch() {
+      const v = switchQueued;
+      switchQueued = false;
+      return v;
+    },
   };
 }
