@@ -276,6 +276,8 @@ export function createWorld(scene) {
     [-22, -1, 1.2], [-20, -11, 1.2], [-10, 10, 1.2], [10, 11, 1.2],
     [-6, -10, 1.2], [2, -9, 1.2], [-14.5, -13, 1.2], [13, -13, 1.2],
     [0, 7, 1.2], [-17, 2, 1.2], [14, -2, 1.2],
+    [-14.6, -4.9, 1.2], // pad-edge cover at Site A: foreground depth for
+    // the end-of-round frame, clear of the 26-7 and 28-5 lanes
   ];
   for (const [x, z, s] of crates) box(s, s, s, x, s / 2, z, 'hairline');
   box(1.2, 1.2, 1.2, -22, 1.8, -1, 'hairline');
@@ -290,6 +292,8 @@ export function createWorld(scene) {
   rickshaw(-18, -4, 1.2);
   barrel(-18, 4); barrel(-18.9, 4.6); barrel(12, 9); barrel(12.9, 9.5);
   barrel(-8, -3); barrel(16, 14); barrel(-22, -13); barrel(22, -13);
+  barrel(-16.5, -6.5); // pad-edge drum at Site A: foreground depth for
+  // the end-of-round frame, clear of the 26-7 lane
 
   // Pipes along the walls.
   const pipeMat = materials.rust;

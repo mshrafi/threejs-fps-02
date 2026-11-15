@@ -71,22 +71,26 @@ export function createWeapon(camera) {
   camera.add(modelHolder);
 
   const flash = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.34, 0.34),
+    new THREE.PlaneGeometry(0.2, 0.2),
     new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.accent), transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }),
   );
-  flash.position.set(0.22, -0.2, -1.0);
+  // At the muzzle tip, not the middle of the screen: the old 0.34 plane at
+  // z=-1.0 read as a giant orange diamond covering the target. Small, at
+  // the gun, slightly tilted — a burst, not a billboard.
+  flash.position.set(0.26, -0.22, -0.8);
+  flash.rotation.z = 0.5;
   flash.visible = false;
   camera.add(flash);
   const flashLight = new THREE.PointLight(new THREE.Color(PALETTE.accent), 0, 6);
-  flashLight.position.set(0.22, -0.18, -0.7);
+  flashLight.position.set(0.26, -0.2, -0.7);
   camera.add(flashLight);
 
   let model = null;
   const state = {
-    def: WEAPONS.megh7, mag: WEAPONS.megh7.mag, reserve: WEAPONS.megh7.reserve,
+    def: WEAPONS.p9, mag: WEAPONS.p9.mag, reserve: WEAPONS.p9.reserve,
     cooldown: 0, reloadLeft: 0, flash: 0, kick: 0, bloom: 0,
     grenades: 0,
-    primary: WEAPONS.megh7, // the bought gun; the P9 is a permanent secondary
+    primary: WEAPONS.p9, // the bought gun; the P9 is a permanent secondary
     ammoById: {}, // per-weapon mag/reserve, so switching keeps each gun's ammo
     adsT: 0, // 0 hipfire → 1 aimed: the view model rises toward centre
     adsTarget: false,
@@ -120,7 +124,7 @@ export function createWeapon(camera) {
     model.scale.setScalar(0.68);
     modelHolder.add(model);
   }
-  equip(WEAPONS.megh7);
+  equip(WEAPONS.p9);
 
   function step(dt) {
     state.cooldown = Math.max(0, state.cooldown - dt);
@@ -139,7 +143,6 @@ export function createWeapon(camera) {
       }
     }
     flash.visible = state.flash > 0;
-    if (state.flash > 0) flash.rotation.z = state.flash * 30;
     flashLight.intensity = state.flash > 0 ? 26 : 0;
     if (state.reloadLeft > 0) {
       state.reloadLeft = Math.max(0, state.reloadLeft - dt);
@@ -156,6 +159,9 @@ export function createWeapon(camera) {
     state,
     step,
     equip,
+    // The end-of-round capture hides the view model so it never covers a
+    // teammate in the frame; normal play always shows it.
+    setModelVisible(v) { modelHolder.visible = v; },
     // Q / scroll swaps between the bought gun and the permanent P9 sidearm.
     toggleSecondary() {
       equip(state.def.id === 'p9' ? state.primary : WEAPONS.p9);

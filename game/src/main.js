@@ -173,7 +173,14 @@ function syncHud() {
     // stale "YOU CARRY THE CHARGE" under a ROUND WON banner.
     hud.setCharge('');
   } else if (charge.planted) {
-    hud.setCharge(`CHARGE PLANTED — ${charge.site} · ${Math.ceil(charge.timer)}s`);
+    // Under 10 s and close to the charge, the line is a warning: the blast
+    // kills anyone standing on the site, planter included.
+    const d = Math.hypot(body.position.x - charge.x, body.position.z - charge.z);
+    if (charge.timer < 10 && d < 7) {
+      hud.setCharge(`⚠ CHARGE BLOWS IN ${Math.ceil(charge.timer)}s — GET CLEAR`);
+    } else {
+      hud.setCharge(`CHARGE PLANTED — ${charge.site} · ${Math.ceil(charge.timer)}s`);
+    }
   } else if (charge.carrier === 'player') {
     hud.setCharge('YOU CARRY THE CHARGE — hold E at a site');
   } else if (charge.carrier) {
@@ -312,17 +319,34 @@ function runShot(name) {
     sim.state.buyTime = 0;
     settle(6);
     const reaver = bots.list.find((b) => b.team === 'reaver');
-    reaver.group.position.set(-2.5, 0, 2);
+    // Open ground in front of the mid container: the old spot left the
+    // target half-hidden behind it, head and torso only. Hold still for
+    // the frame so the staged shot lands instead of chasing a strafing bot.
+    reaver.group.position.set(-2.5, 0, 3.5);
     reaver.deployed = true;
+    reaver.state = 'hold';
+    reaver.holdLeft = 30;
+    reaver.target = null;
     const mate = bots.list.find((b) => b.team === 'sentinel');
-    mate.group.position.set(-3.5, 0, 8);
+    mate.group.position.set(-3.5, 0, 5.5);
     mate.deployed = true;
+    mate.state = 'hold';
+    mate.holdLeft = 30;
+    mate.target = null;
     body.position.set(0, 0, 12);
+    settle(0.1);
+    // Aim last, at the target's position now: aiming before the settle let
+    // the bot walk out of the shot in 0.1 s and the tracer went to the
+    // screen edge on a miss.
     const target = bots.list.filter((b) => b.team === 'reaver' && b.alive)[0];
     aimAt(target.group.position.x, 1.35, target.group.position.z);
-    settle(0.1);
     sim.playerShoot();
     sim.state.flash = 0.5;
+    // The muzzle flash lives 0.06 s and only becomes visible when
+    // weapon.step runs — set it after the settle, right before the
+    // capture, so the frame actually holds the flash.
+    weapon.state.flash = 0.06;
+    weapon.step(0);
     drainEvents();
     syncHud();
     syncCamera();
@@ -341,13 +365,27 @@ function runShot(name) {
       }
     }
     const mates = bots.list.filter((b) => b.team === 'sentinel' && b.alive);
+    // Shoot from the pad's south edge, looking north across the pad at
+    // both survivors: the camera must stay WEST of the x=-14 market-hall
+    // wall (the south-east corner put it inside the hall's z=-4.5 wall
+    // and the frame was a flat dark wall). The open mid map, the lamp and
+    // the sky are the background now; the hall wall is only an edge.
+    // The A-sign pole sits due east of here, out of a north frame — the
+    // orange pad and the ROUND WON banner carry the site instead.
+    body.position.set(-15.5, 0, -5.8);
+    aimAt(-16.8, 1.2, -11);
     // Hold still for the frame, facing the camera, with Site A behind them.
-    if (mates[0]) { mates[0].group.position.set(-15.5, 0, -7); mates[0].deployed = true; mates[0].state = 'hold'; mates[0].holdLeft = 30; mates[0].target = null; mates[0].yaw = 2.98; }
-    if (mates[1]) { mates[1].group.position.set(-18.5, 0, -10.5); mates[1].deployed = true; mates[1].state = 'hold'; mates[1].holdLeft = 30; mates[1].target = null; mates[1].yaw = -2.77; }
-    // Shoot from inside Site A, looking across the pad at both survivors —
-    // the gap view put a dark wall across half the frame.
-    body.position.set(-16, 0, -4);
-    aimAt(-17.5, 1.3, -10);
+    if (mates[0]) { mates[0].group.position.set(-15, 0, -8.5); mates[0].deployed = true; mates[0].state = 'hold'; mates[0].holdLeft = 30; mates[0].target = null; }
+    if (mates[1]) { mates[1].group.position.set(-19, 0, -11); mates[1].deployed = true; mates[1].state = 'hold'; mates[1].holdLeft = 30; mates[1].target = null; }
+    // Face the camera: a bot's forward is its local -z, so the yaw that
+    // looks at the camera is atan2 of the negated offset to it.
+    for (const mate of mates) {
+      mate.yaw = Math.atan2(-(body.position.x - mate.group.position.x), -(body.position.z - mate.group.position.z));
+      mate.group.rotation.y = mate.yaw;
+    }
+    // The view model used to cover the right-hand mate; the end frame is
+    // about the team, not the gun.
+    weapon.setModelVisible(false);
     sim.endRound('sentinel', 'Enemy team eliminated');
     drainEvents();
     syncHud();
@@ -363,12 +401,17 @@ function runShot(name) {
 
 function reassertEndFeed() {
   // Kill-feed entries fade on a wall-clock timer that can expire before a
-  // slow headless capture; re-add them if the feed has emptied.
+  // slow headless capture. Clear the feed, then re-add the two kill
+  // entries: the old empty-check let a still-alive callout (e.g. the
+  // "flanking A!" line) block them for the whole capture.
   const feed = document.getElementById('killfeed');
-  if (feed && feed.children.length === 0) {
-    hud.killfeed('You  ✕  Rook  (headshot)', 'sentinel');
-    hud.killfeed('Arif  ✕  Sable', 'sentinel');
-  }
+  if (!feed) return;
+  const want = ['You  ✕  Rook  (headshot)', 'Arif  ✕  Sable'];
+  const have = [...feed.children].map((el) => el.textContent);
+  if (have.length === want.length && have.every((text, i) => text === want[i])) return;
+  feed.replaceChildren();
+  hud.killfeed(want[0], 'sentinel');
+  hud.killfeed(want[1], 'sentinel');
 }
 
 function paintTwiceThenReady() {
@@ -401,7 +444,7 @@ window.addEventListener('resize', () => {
 
 // Debug / playtest hook: lets a headless driver inspect and drive the sim.
 window.__game = {
-  sim, player, weapon, bots, input, hud, audio,
+  sim, player, weapon, bots, input, hud, audio, renderer,
   // Advance the fixed-step sim deterministically, without waiting on rAF.
   advance(seconds) { settle(seconds); },
   fire() {

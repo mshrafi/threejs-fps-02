@@ -103,7 +103,8 @@
   #buy-money { color: var(--accent); font-family: var(--font-readout); margin-bottom: 10px; }
   #buy .row { display: flex; justify-content: space-between; gap: 8px; padding: 8px 6px; border-top: 1px solid var(--hairline); font-size: 14px; }
   #buy .row .key { color: var(--muted); font-family: var(--font-readout); margin-right: 6px; }
-  #buy .row.owned { color: var(--ok); }
+  #buy .row.owned { color: var(--ok); font-weight: 600; }
+  #buy .row.owned::after { content: 'OWNED'; font-size: 10px; font-weight: 700; letter-spacing: .12em; color: var(--ok); border: 1px solid var(--ok); border-radius: 3px; padding: 2px 5px; align-self: center; }
   #buy .row.cant { opacity: .45; }
   #buy .hint { margin-top: 10px; font-size: 12px; color: var(--muted); }
 

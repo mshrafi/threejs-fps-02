@@ -12,7 +12,7 @@ const ROUND_TIME = 100;
 const BUY_TIME = 8;
 const PLANT_TIME = 3;
 const DEFUSE_TIME = 4;
-const CHARGE_TIMER = 30;
+const CHARGE_TIMER = 40;
 const WIN_ROUNDS = 5;
 const KILL_REWARD = 300;
 const WIN_REWARD = 3000;
@@ -22,6 +22,8 @@ const _dir = new THREE.Vector3();
 const _from = new THREE.Vector3();
 const _to = new THREE.Vector3();
 const _eye = new THREE.Vector3();
+const _proj = new THREE.Vector3();
+const _proj2 = new THREE.Vector3();
 // Reused ray target list: shootables plus live bot hitboxes, rebuilt per
 // shot without a concat allocation.
 const _targets = [];
@@ -45,6 +47,25 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
   }
   let tracerIndex = 0;
   function tracer(from, to, color = 0xffc861) {
+    // A tracer whose both ends project outside the camera frustum reads as
+    // a scratch across the whole frame (off-screen shooter to off-screen
+    // target), so skip it: a bullet nobody can see the ends of is not drawn.
+    // The matrices must be fresh: in a staged capture no render has run yet.
+    camera.updateMatrixWorld();
+    _proj.copy(from).project(camera);
+    const fromIn = _proj.x > -1.05 && _proj.x < 1.05 && _proj.y > -1.05 && _proj.y < 1.05 && _proj.z > -1 && _proj.z < 1;
+    _proj2.copy(to).project(camera);
+    const toIn = _proj2.x > -1.05 && _proj2.x < 1.05 && _proj2.y > -1.05 && _proj2.y < 1.05 && _proj2.z > -1 && _proj2.z < 1;
+    if (!fromIn && !toIn) return;
+    // One end at or past the screen edge and a projected span wider than
+    // ~85% of the frame is the same scratch in the other direction: a line
+    // from a half-seen shooter to a target past the far edge crosses the
+    // whole screen with no visible anchor at one end. A long shot with
+    // both ends comfortably in frame keeps its anchors and still draws.
+    const spanX = Math.abs(_proj.x - _proj2.x);
+    const spanY = Math.abs(_proj.y - _proj2.y);
+    const edgeEnd = Math.abs(_proj.x) > 0.95 || Math.abs(_proj.y) > 0.95 || Math.abs(_proj2.x) > 0.95 || Math.abs(_proj2.y) > 0.95;
+    if (edgeEnd && (spanX > 1.7 || spanY > 1.7)) return;
     const t = tracers[tracerIndex];
     tracerIndex = (tracerIndex + 1) % tracers.length;
     const len = from.distanceTo(to);
@@ -97,7 +118,7 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     roundTime: ROUND_TIME,
     buyTime: BUY_TIME,
     phaseTime: 0,
-    money: 800,
+    money: 1500,
     charge: { carrier: 'player', planted: false, x: 0, z: 0, site: null, timer: CHARGE_TIMER, beep: 0 },
     plantProgress: 0,
     playerKills: 0,
@@ -108,6 +129,11 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     // and bots shoot worse in the dark.
     flash: 0,
     blackout: { active: false, timer: 0, nextStrike: 16 + rng() * 10, flickerDone: false },
+    // Last-man-standing grace: the moment the player becomes the only
+    // living sentinel, reavers hold for 3 s instead of instantly
+    // converging on them. graceDone fires it once per round.
+    graceUntil: 0,
+    graceDone: false,
   };
   const events = [];
 
@@ -282,6 +308,17 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
   }
 
   // ---- bot shooting: burst fire resolved by line of sight + accuracy roll ----
+  // How many reavers are currently focused on the player: the focus-fire
+  // cap in bots.js keeps it at two, and damage scales down with it, so a
+  // firing line can chip the player but never melt them in seconds.
+  function engagingPlayerCount() {
+    let n = 0;
+    for (const b of bots.list) {
+      if (b.alive && b.team === 'reaver' && b.target && b.target.kind === 'player') n += 1;
+    }
+    return n;
+  }
+
   function botShoot(bot, target) {
     const from = _from.set(bot.group.position.x, 1.35, bot.group.position.z);
     const targetPos = eyePosOf(target);
@@ -293,6 +330,10 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     if (target.kind === 'player' && player.groundSpeed() > 2) chance -= 0.1;
     if (bot.state === 'engage' && bot.burstLeft > 0) chance += 0.05;
     if (state.blackout.active) chance -= 0.08; // bots shoot worse in the dark
+    // Reavers hold their angles while sentinels walk into them, so
+    // reaver-vs-bot accuracy is shaved a little: bot fights should be
+    // winnable for either side without the player carrying them.
+    if (target.kind !== 'player' && bot.team === 'reaver') chance -= 0.05;
     // Long-range crossfire melted the player in the opening seconds, so
     // accuracy falls off hard past 15 m against the player.
     if (target.kind === 'player') chance -= Math.max(0, dist - 15) * 0.012;
@@ -303,8 +344,13 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     if (rng() < chance) {
       // Focused bot fire would melt the player in seconds, so hits on the
       // player deal a little over half damage; bot-on-bot damage is full.
+      // Focus fire scales down further with the number of reavers engaging
+      // the player, so two shooters together are barely worse than one.
       let damage = 8 + rng() * 7;
-      if (target.kind === 'player') damage *= 0.55 * (dist > 18 ? 0.7 : 1);
+      if (target.kind === 'player') {
+        const n = engagingPlayerCount();
+        damage *= 0.55 * (dist > 18 ? 0.7 : 1) / (1 + 0.35 * Math.max(0, n - 1));
+      }
       if (target.kind === 'player') {
         damagePlayer(damage, from, bot.name);
       } else {
@@ -369,13 +415,16 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     state.charge.planted = true;
     state.charge.timer = CHARGE_TIMER;
     state.charge.beep = 0;
+    state.charge.plantedAt = state.time;
     const site = state.charge.site;
     chargeMesh.position.set(state.charge.x, 0.2, state.charge.z);
     chargeMesh.visible = true;
     chargeLight.position.set(state.charge.x, 1.2, state.charge.z);
     chargeLight.intensity = 6;
     audio.planted();
-    emit({ type: 'banner', title: 'CHARGE PLANTED', sub: `${site} — defend it until it blows`, tone: 'warn' });
+    // The blast kills anyone standing on the site, planter included — say
+    // so plainly instead of telling the planter to defend it until it blows.
+    emit({ type: 'banner', title: 'CHARGE PLANTED', sub: `${site} — fall back, it blows in ${CHARGE_TIMER}s`, tone: 'warn' });
     emit({ type: 'planted' });
   }
 
@@ -440,6 +489,8 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     state.plantProgress = 0;
     state.blackout = { active: false, timer: 0, nextStrike: 16 + rng() * 10, flickerDone: false };
     state.flash = 0;
+    state.graceUntil = 0;
+    state.graceDone = false;
     state.charge = { carrier: 'player', planted: false, x: 0, z: 0, site: null, timer: CHARGE_TIMER, beep: 0 };
     botEnv.charge = state.charge; // startRound replaces the object; the bots must see the new one
     chargeMesh.visible = false;
@@ -485,6 +536,7 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
   const botEnv = {
     time: 0,
     charge: state.charge,
+    graceUntil: 0,
     los,
     enemiesOf(bot, out) {
       // Fills the caller's scratch array instead of allocating per scan.
@@ -622,6 +674,16 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
 
     updateLightning(dt);
 
+    // Last-man-standing grace: the moment the player becomes the only
+    // living sentinel, reavers hold for 3 s instead of instantly
+    // converging — once per round, with a callout so it reads as a rule.
+    if (player.state.alive && bots.aliveCount('sentinel') === 0 && !state.graceDone) {
+      state.graceDone = true;
+      state.graceUntil = state.time + 3;
+      emit({ type: 'killfeed', text: 'Last one standing — hold your ground!', team: 'sentinel' });
+    }
+    botEnv.graceUntil = state.graceUntil;
+
     // Player planting: hold E inside a site while carrying the charge.
     if (state.charge.carrier === 'player' && player.state.alive) {
       let inSite = null;
@@ -672,9 +734,11 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
   function resetMatch() {
     state.score = { sentinel: 0, reaver: 0 };
     state.round = 1;
-    state.money = 800;
+    state.money = 1500;
     state.playerKills = 0;
-    weapon.equip(WEAPONS.megh7);
+    // Round 1 is a real choice, not a free rifle: the player starts on the
+    // P9 with $1,500 — the Jol-9 or grenades now, the Megh-7 after a win.
+    weapon.equip(WEAPONS.p9);
     startRound();
   }
 

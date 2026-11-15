@@ -122,7 +122,10 @@ export function createHud() {
         const id = row.dataset.weapon;
         const price = row.dataset.price;
         row.classList.toggle('owned', owned === id);
-        row.classList.toggle('cant', Number(price) > money && owned !== id);
+        // Unaffordable is unaffordable whether or not it is owned: the
+        // owned row used to stay bright at $800 against a $2,700 price
+        // and read as buyable. The owned row gets its OWNED badge instead.
+        row.classList.toggle('cant', Number(price) > money);
       }
       const grenade = els.buy.querySelector('[data-weapon="grenade"]');
       grenade.classList.toggle('cant', money < 300);

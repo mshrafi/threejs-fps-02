@@ -38,10 +38,13 @@ Desktop Chrome, no network needed — three.js is vendored under `game/vendor/`.
 ## How to play
 
 - **Objective:** plant the charge at Site A or Site B (hold `E` at a site for
-  3s), then defend it until it blows — or eliminate the enemy team. First to
-  5 rounds takes the match.
-- **Money:** start with $800; kills pay $300, a round win $3,000, a loss
-  $1,500. Spend it in the buy menu (`B` during the buy phase).
+  3s), then fall back — it blows in 40s and the blast kills anyone standing
+  on the site. Or eliminate the enemy team. First to 5 rounds takes the match.
+- **Money:** start with $1,500 on the P9 sidearm; kills pay $300, a round win
+  $3,000, a loss $1,500. Spend it in the buy menu (`B` during the buy phase).
+  Round 1 is a real choice — the Jol-9 SMG or grenades now, the Megh-7
+  after a win — and the menu marks the owned gun OWNED and dims whatever
+  you cannot afford.
 - **Weapons:** Megh-7 Carbine ($2,700, auto), Jol-9 SMG ($1,500), Bijli-50
   marksman ($4,500), P9 sidearm (free), and the Spark grenade ($300, throw
   with `G`).
@@ -62,6 +65,33 @@ Desktop Chrome, no network needed — three.js is vendored under `game/vendor/`.
 | G | Throw grenade |
 | E (hold) | Plant the charge at a site |
 | M | Mute |
+
+## v3 changes
+
+- **No more spawn melt:** at most two reavers may focus the player, their
+  damage against the player scales down with the number engaging, and the
+  last living sentinel gets a 3 s grace with a callout while reavers hold —
+  an idle player now survives well past 25 s of live play instead of dying
+  in 3.5 s.
+- **Defuse actually happens:** a planted charge outranks gunshot curiosity,
+  the closest reaver breaks off a firefight to rotate to the site (all of
+  them 5 s after planting), and the charge timer is 40 s so the long route
+  into Site A is survivable. The plant banner now says to fall back, and
+  the HUD warns when the blast is under 10 s away and you are close.
+- **Real round-1 economy:** the player starts on the P9 with $1,500, so the
+  Jol-9 is the round-1 buy and the Megh-7 is the round-2 aspiration. The buy
+  menu marks the owned gun OWNED and dims unaffordable rows outright.
+- **Sentinels hold mid:** two defenders now hold the mid nodes instead of
+  every defender pushing a site into reaver crossfire, and reaver-vs-bot
+  accuracy is shaved, so bot fights are winnable without the player.
+- **Cleaner frames:** tracers whose both ends are off-screen are not drawn
+  (they read as scratches), the play capture sets the muzzle flash after
+  the settle so it is actually in the frame, and the end capture is
+  reframed from the pad's south-east corner with the mates facing the
+  camera, the view model hidden, the kill feed cleared and re-added, and a
+  crate and drum at the pad edge for foreground depth.
+- **Cover is real:** a hurt bot now actually falls back along a retreat
+  path instead of standing in the open at low health.
 
 ## v2 changes
 

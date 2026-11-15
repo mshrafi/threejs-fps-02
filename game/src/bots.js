@@ -88,7 +88,10 @@ function buildBotMesh(team) {
   head.position.y = 1.54;
   head.castShadow = true;
   const visor = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.05, 0.05), visorMat);
-  visor.position.set(0, 1.56, 0.17);
+  // On the face, the gun side (local -z): it used to sit at +0.17, the back
+  // of the head, so a bot facing the camera showed a blank dark sphere
+  // instead of a face.
+  visor.position.set(0, 1.56, -0.19);
   const gun = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.58), darkMat);
   gun.position.set(0.22, 1.1, -0.2);
   group.add(torso, legs, head, visor, gun);
@@ -229,8 +232,15 @@ export function createBots(scene, world, rng) {
       return;
     }
     if (bot.team === 'sentinel') {
-      const site = bot.hasCharge ? (rng() < 0.5 ? 7 : 19) : (bot.id.endsWith('0') || bot.id.endsWith('2') ? 7 : 19);
-      setPath(bot, site);
+      // Two sentinels hold mid (nodes 11/12) instead of every defender
+      // pushing a site into reaver crossfire: defenders who hold angles
+      // actually win bot fights, and mid is where the reaver routes run.
+      if (!bot.hasCharge && bot.id === 'sentinel-0') setPath(bot, 11);
+      else if (!bot.hasCharge && bot.id === 'sentinel-2') setPath(bot, 12);
+      else {
+        const site = bot.hasCharge ? (rng() < 0.5 ? 7 : 19) : (bot.id.endsWith('0') || bot.id.endsWith('2') ? 7 : 19);
+        setPath(bot, site);
+      }
     } else {
       setPath(bot, rng() < 0.5 ? 8 : 20);
     }
@@ -251,15 +261,38 @@ export function createBots(scene, world, rng) {
       if (bot.pathIndex >= 1 || (bot.team === 'sentinel' && z < 10) || (bot.team === 'reaver' && z > -10)) bot.deployed = true;
     }
 
+    // Last-man-standing grace: while it runs, reavers hold where they are
+    // instead of converging on the player — unless the charge is planted,
+    // in which case defusing still outranks the hold.
+    const inGrace = bot.team === 'reaver' && env.graceUntil && env.time < env.graceUntil && !env.charge.planted;
+    if (inGrace && (bot.state === 'engage' || bot.state === 'advance')) {
+      // Advancing bots would walk their route toward the player, so they
+      // hold too; regrouping and covering bots are already falling back.
+      bot.state = 'hold';
+      bot.target = null;
+      bot.holdLeft = Math.max(bot.holdLeft, env.graceUntil - env.time);
+    }
+
     // Periodic perception: nearest visible enemy decides the fight. Not yet
     // deployed bots skip this entirely, so routes and sites actually run.
-    if (bot.scanTimer <= 0) {
+    // During grace reavers do not acquire new targets at all.
+    if (!inGrace && bot.scanTimer <= 0) {
       bot.scanTimer = SCAN_EVERY;
       let best = null;
       let bestD = Infinity;
       const candidates = bot.deployed ? env.enemiesOf(bot, enemiesScratch) : enemiesScratch;
       if (bot.deployed) {
+        // Focus-fire cap: at most two reavers may have the player as their
+        // target. A third reaver that would pick the player falls back to
+        // the sentinels or the sites instead of joining a firing line.
+        let playerTargeters = 0;
+        if (bot.team === 'reaver') {
+          for (const other of list) {
+            if (other !== bot && other.alive && other.team === 'reaver' && other.target && other.target.kind === 'player') playerTargeters += 1;
+          }
+        }
         for (const enemy of candidates) {
+          if (enemy.kind === 'player' && playerTargeters >= 2) continue;
           const dx = enemy.x - bot.group.position.x;
           const dz = enemy.z - bot.group.position.z;
           const d = Math.hypot(dx, dz);
@@ -277,7 +310,7 @@ export function createBots(scene, world, rng) {
       if (best && bot.hasCharge && bestD > 12) best = null;
       if (best) {
         bot.target = best;
-        if (bot.state !== 'engage' && bot.state !== 'defuse' && bot.state !== 'plant') {
+        if (bot.state !== 'engage' && bot.state !== 'defuse' && bot.state !== 'plant' && bot.state !== 'cover') {
           bot.state = 'engage';
           bot.stateTime = 0;
           bot.shootTimer = bot.reaction;
@@ -289,6 +322,10 @@ export function createBots(scene, world, rng) {
         bot.stateTime = 0;
         if (bot.pathIndex >= bot.path.length) pickObjective(bot, env);
       }
+    } else if (inGrace) {
+      // Grace still consumes the scan timer so the bot does not scan the
+      // instant the hold lifts.
+      bot.scanTimer = SCAN_EVERY;
     }
 
     // The regrouper falls back to heal when hurt, then rejoins the fight.
@@ -301,7 +338,11 @@ export function createBots(scene, world, rng) {
 
     // Heard a shot recently and nothing to fight: go look — unless this
     // bot carries the charge, in which case the site outranks curiosity.
-    if (!bot.hasCharge && bot.state !== 'engage' && bot.lastHeard && env.time - bot.lastHeardTime < 6) {
+    // A planted charge outranks it too: a defuse-bound reaver that chases
+    // every gunshot ping-pongs between two paths and never reaches the
+    // site, because every setPath resets its progress to zero.
+    if (!bot.hasCharge && bot.state !== 'engage' && bot.state !== 'cover' && !inGrace && bot.lastHeard && env.time - bot.lastHeardTime < 6
+      && !(env.charge.planted && bot.team === 'reaver')) {
       const dx = bot.lastHeard.x - bot.group.position.x;
       const dz = bot.lastHeard.z - bot.group.position.z;
       if (Math.hypot(dx, dz) > 3) {
@@ -328,7 +369,26 @@ export function createBots(scene, world, rng) {
           if (bot.actionProgress >= 4) env.onDefused(bot);
           return;
         }
-        if (bot.state !== 'defuse' && bot.state !== 'engage') {
+        // Defuse outranks a firefight: the closest living reaver breaks
+        // off and rotates to the site even from engage, and 5 s after
+        // planting every reaver rotates. Without this a mid firefight
+        // pins the whole team and the charge always blows.
+        const plantedFor = env.time - (env.charge.plantedAt || 0);
+        let closest = null;
+        let closestD = Infinity;
+        for (const other of list) {
+          if (!other.alive || other.team !== 'reaver') continue;
+          const d = Math.hypot(env.charge.x - other.group.position.x, env.charge.z - other.group.position.z);
+          if (d < closestD) {
+            closestD = d;
+            closest = other;
+          }
+        }
+        if ((plantedFor > 5 || closest === bot) && bot.state !== 'defuse') {
+          if (bot.state === 'engage' || bot.state === 'hold') {
+            bot.state = 'advance';
+            bot.target = null;
+          }
           const node = nearestWaypoint(waypoints, env.charge.x, env.charge.z);
           if (node !== bot.goalNode) setPath(bot, node);
         }
@@ -356,6 +416,18 @@ export function createBots(scene, world, rng) {
           bot.state = 'advance';
           pickObjective(bot, env);
         }
+      } else {
+        const node = waypoints[bot.path[bot.pathIndex]];
+        if (moveToward(bot, node[0], node[1], dt, bot.speed)) bot.pathIndex += 1;
+      }
+    } else if (bot.state === 'cover') {
+      // Hurt and falling back: walk the retreat path sim.js picked, then
+      // rejoin the fight. (damageBot sets this state; without a branch
+      // here the bot just stood in the open at low health.)
+      if (bot.pathIndex >= bot.path.length || bot.stateTime > 3) {
+        bot.state = 'advance';
+        bot.stateTime = 0;
+        pickObjective(bot, env);
       } else {
         const node = waypoints[bot.path[bot.pathIndex]];
         if (moveToward(bot, node[0], node[1], dt, bot.speed)) bot.pathIndex += 1;
