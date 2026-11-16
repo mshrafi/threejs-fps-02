@@ -62,6 +62,7 @@ const SIGNS = [
   ['CHAI GHAR', '#ff4d8d'], ['MEGH MOBILE', '#35d0ff'], ['NEON BIRYANI', '#f0a832'],
   ['JOL CAFE', '#59e39a'], ['BIJLI ELECTRONICS', '#35d0ff'], ['DHAKA DELIGHT', '#ff4d8d'],
   ['MONSOON TAILOR', '#f0a832'], ['RICKY TEA STALL', '#59e39a'],
+  ['ALO CHAI', '#ff4d8d'],
 ];
 
 function neonTexture(text, color) {
@@ -109,7 +110,7 @@ function siteTexture(letter) {
   return tex;
 }
 
-export function createWorld(scene) {
+export function createWorld(scene, rng) {
   const group = new THREE.Group();
   scene.add(group);
   const materials = {};
@@ -238,13 +239,14 @@ export function createWorld(scene) {
     [5, -4, 2.4, -0.7, 0], // DHAKA DELIGHT, container face
     [6, 15.2, 3.0, 2, -Math.PI / 2], // MONSOON TAILOR, B-tunnel wall
     [7, 9, 2.4, 4.7, Math.PI], // RICKY TEA STALL, container face
+    [8, -23.9, 3.4, -11, Math.PI / 2], // ALO CHAI, west wall over Site A
   ];
   const signMeshes = [];
   for (const [index, x, y, z, rotY] of signPlacements) {
     const [name, color] = SIGNS[index];
     const sign = new THREE.Mesh(
       new THREE.PlaneGeometry(4.4, 1.1),
-      new THREE.MeshBasicMaterial({ map: neonTexture(name, color) }),
+      new THREE.MeshBasicMaterial({ map: neonTexture(name, color), side: THREE.DoubleSide }),
     );
     sign.position.set(x, y, z);
     sign.rotation.y = rotY;
@@ -328,6 +330,11 @@ export function createWorld(scene) {
   const lampLight2 = new THREE.PointLight(new THREE.Color('#ffb45e'), 22, 18);
   lampLight2.position.set(6, 4.2, -4);
   scene.add(lampLight2);
+  // Third lamp over Site A: washes the pad, the mates and the west wall's
+  // east face in the end-of-round frame. The head already exists at (-16,-12).
+  const lampLight3 = new THREE.PointLight(new THREE.Color('#ffb45e'), 22, 18);
+  lampLight3.position.set(-16, 4.2, -12);
+  scene.add(lampLight3);
 
   // City silhouettes outside the walls: towers and a minaret against the sky.
   const far = new THREE.MeshStandardMaterial({ color: new THREE.Color('#0d0f1a'), roughness: 1 });
@@ -403,17 +410,19 @@ export function createWorld(scene) {
   const STREAK = 0.45;
   const rainPos = new Float32Array(RAIN_COUNT * 6);
   const rainSpeed = new Float32Array(RAIN_COUNT);
+  // Rain positions come from the seeded RNG (main.js passes mulberry32),
+  // never an unseeded one: the same seed stages the same storm.
   for (let i = 0; i < RAIN_COUNT; i += 1) {
-    const x = (Math.random() * 2 - 1) * 20;
-    const y = Math.random() * 18;
-    const z = (Math.random() * 2 - 1) * 20;
+    const x = (rng() * 2 - 1) * 20;
+    const y = rng() * 18;
+    const z = (rng() * 2 - 1) * 20;
     rainPos[i * 6] = x;
     rainPos[i * 6 + 1] = y;
     rainPos[i * 6 + 2] = z;
     rainPos[i * 6 + 3] = x;
     rainPos[i * 6 + 4] = y - STREAK;
     rainPos[i * 6 + 5] = z;
-    rainSpeed[i] = 14 + Math.random() * 10;
+    rainSpeed[i] = 14 + rng() * 10;
   }
   const rainGeo = new THREE.BufferGeometry();
   rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
@@ -433,7 +442,7 @@ export function createWorld(scene) {
 
   return {
     colliders, shootables, group, waypoints: WAYPOINTS, adjacency,
-    hemi, moon, fill, fillNorth, lightning, lampLight1, lampLight2, lamps, lampMat, rain: rainState,
+    hemi, moon, fill, fillNorth, lightning, lampLight1, lampLight2, lampLight3, lamps, lampMat, rain: rainState,
   };
 }
 

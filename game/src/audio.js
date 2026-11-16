@@ -2,6 +2,11 @@
 // noise through WebAudio, so the game ships no audio files and makes no requests.
 // The context is created lazily on the first user gesture (browsers require it);
 // in screenshot mode it stays uncreated and every call is a safe no-op.
+import { mulberry32 } from './rng.js';
+
+// Noise comes from a fixed-seed local RNG, never an unseeded one: the
+// same session sounds the same every run.
+const noiseRand = mulberry32(1337);
 export function createAudio() {
   let ctx = null;
   let master = null;
@@ -25,7 +30,7 @@ export function createAudio() {
   function noiseBuffer(duration) {
     const buffer = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * duration)), ctx.sampleRate);
     const data = buffer.getChannelData(0);
-    for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
+    for (let i = 0; i < data.length; i += 1) data[i] = noiseRand() * 2 - 1;
     return buffer;
   }
 

@@ -1,6 +1,8 @@
 # Monsoon Strike — a three.js tactical FPS
 
-[![make.fun](https://make.fun/badge.svg)](https://make.fun/bounty/threejs-fps-02)
+[![make.fun · threejs-fps-02](https://make.fun/badge/threejs-fps-02.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+[![rank](https://make.fun/badge/threejs-fps-02/mshrafi/threejs-fps-02/rank.svg)](https://make.fun/bounty/threejs-fps-02/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+[![reward](https://make.fun/badge/threejs-fps-02/mshrafi/threejs-fps-02/reward.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
 
 A round-based tactical shooter in the style Counter-Strike made famous, built
 with three.js and no build step. Barsha Guard vs Neon Reavers, 5v5 with bots,
@@ -65,6 +67,26 @@ Desktop Chrome, no network needed — three.js is vendored under `game/vendor/`.
 | G | Throw grenade |
 | E (hold) | Plant the charge at a site |
 | M | Mute |
+
+## v4 changes
+
+- **Idle player survives the opening:** first-sight dwell (0.6 s of continuous
+  line of sight before a bot commits to a player target), first shot vs the
+  player delayed a further 0.7 s, accuracy ramping from 55% over 5 s of
+  sustained engagement, player damage factor 0.45 with a probe-fire cut for
+  stationary targets, focus-fire cap of one reaver on the player, 4 s of
+  spawn protection after the round goes live, and last-man grace 3 s → 5 s.
+  Bot-vs-bot fights are untouched — every new term is gated on the target
+  being the player.
+- **End frame rebuilt:** camera moved south of the hall wall's end so the
+  right edge looks through the wall gap, the second mate stands on the pad's
+  west edge, a new ALO CHAI neon sign and a third lamp light the pad and the
+  west wall, and a lightning flash is set after the settle.
+- **Gunplay:** a hit now flinches an engaged bot — its burst is interrupted
+  and it must re-aim before firing again.
+- **Code:** enemy targets are preallocated objects mutated in place (no
+  allocation per scan), shop signs are double-sided, and rain and audio
+  noise now use seeded RNGs — no `Math.random()` remains in the sources.
 
 ## v3 changes
 

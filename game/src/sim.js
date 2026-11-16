@@ -130,10 +130,13 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     flash: 0,
     blackout: { active: false, timer: 0, nextStrike: 16 + rng() * 10, flickerDone: false },
     // Last-man-standing grace: the moment the player becomes the only
-    // living sentinel, reavers hold for 3 s instead of instantly
+    // living sentinel, reavers hold for 5 s instead of instantly
     // converging on them. graceDone fires it once per round.
     graceUntil: 0,
     graceDone: false,
+    // Spawn protection: liveStart is set when a round goes live; the
+    // player takes no damage in the first 4 s of live play.
+    liveStart: 0,
   };
   const events = [];
 
@@ -160,6 +163,10 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
 
   function damagePlayer(amount, fromPos, killer = 'the enemy') {
     if (!player.state.alive || state.phase !== 'live') return;
+    // Spawn protection: no damage in the first 4 s after the round goes
+    // live, so the opening crossfire cannot melt a player who has not
+    // even reached cover yet.
+    if (state.time - state.liveStart < 4) return;
     player.state.health -= amount;
     audio.hurt();
     const dx = fromPos.x - player.state.position.x;
@@ -180,6 +187,12 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     if (!bot.alive) return false;
     bot.health -= amount;
     bot.lastHeard = null;
+    // Flinch: a hit interrupts the bot's burst mid-fire, so it must
+    // re-aim before shooting again instead of beaming through damage.
+    if (bot.state === 'engage') {
+      bot.burstLeft = 0;
+      bot.burstPause = 0.5;
+    }
     if (bot.health <= 35 && bot.state !== 'engage') {
       bot.state = 'cover';
       bot.stateTime = 0;
@@ -308,17 +321,6 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
   }
 
   // ---- bot shooting: burst fire resolved by line of sight + accuracy roll ----
-  // How many reavers are currently focused on the player: the focus-fire
-  // cap in bots.js keeps it at two, and damage scales down with it, so a
-  // firing line can chip the player but never melt them in seconds.
-  function engagingPlayerCount() {
-    let n = 0;
-    for (const b of bots.list) {
-      if (b.alive && b.team === 'reaver' && b.target && b.target.kind === 'player') n += 1;
-    }
-    return n;
-  }
-
   function botShoot(bot, target) {
     const from = _from.set(bot.group.position.x, 1.35, bot.group.position.z);
     const targetPos = eyePosOf(target);
@@ -338,18 +340,22 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     // accuracy falls off hard past 15 m against the player.
     if (target.kind === 'player') chance -= Math.max(0, dist - 15) * 0.012;
     chance = Math.max(0.05, Math.min(0.7, chance));
+    // Accuracy ramp: a bot's first shots at the player land at 55% of
+    // base chance, reaching full accuracy only after 5 s of sustained
+    // engagement — an idle player is not instantly beamed.
+    if (target.kind === 'player') chance *= 0.55 + 0.45 * Math.min(1, bot.engageTime / 5);
     tracer(from, _to, bot.team === 'reaver' ? 0xff7a5c : 0x7adfff);
     audio.shot('bot');
     bots.hearShot(from, state.time);
     if (rng() < chance) {
       // Focused bot fire would melt the player in seconds, so hits on the
-      // player deal a little over half damage; bot-on-bot damage is full.
-      // Focus fire scales down further with the number of reavers engaging
-      // the player, so two shooters together are barely worse than one.
+      // player deal under half damage; bot-on-bot damage is full. A
+      // stationary player takes less still: bots test a stationary target
+      // before committing to it.
       let damage = 8 + rng() * 7;
       if (target.kind === 'player') {
-        const n = engagingPlayerCount();
-        damage *= 0.55 * (dist > 18 ? 0.7 : 1) / (1 + 0.35 * Math.max(0, n - 1));
+        damage *= 0.45 * (dist > 18 ? 0.7 : 1);
+        if (player.groundSpeed() < 0.5) damage *= 0.7;
       }
       if (target.kind === 'player') {
         damagePlayer(damage, from, bot.name);
@@ -532,7 +538,9 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     return true;
   }
 
-  // Environment handed to the bots each step.
+  // Environment handed to the bots each step. Enemy targets are preallocated
+  // objects mutated in place — enemiesOf allocates nothing per scan.
+  const playerTarget = { kind: 'player', x: 0, y: 0, z: 0 };
   const botEnv = {
     time: 0,
     charge: state.charge,
@@ -542,13 +550,30 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
       // Fills the caller's scratch array instead of allocating per scan.
       out.length = 0;
       if (bot.team === 'reaver') {
-        if (player.state.alive) out.push({ kind: 'player', x: player.state.position.x, y: player.state.position.y + player.state.eye, z: player.state.position.z });
+        if (player.state.alive) {
+          playerTarget.x = player.state.position.x;
+          playerTarget.y = player.state.position.y + player.state.eye;
+          playerTarget.z = player.state.position.z;
+          out.push(playerTarget);
+        }
         for (const other of bots.list) {
-          if (other.alive && other.team === 'sentinel') out.push({ kind: 'bot', bot: other, x: other.group.position.x, y: 1.35, z: other.group.position.z });
+          if (other.alive && other.team === 'sentinel') {
+            if (!other._target) other._target = { kind: 'bot', bot: other, x: 0, y: 0, z: 0 };
+            other._target.x = other.group.position.x;
+            other._target.y = 1.35;
+            other._target.z = other.group.position.z;
+            out.push(other._target);
+          }
         }
       } else {
         for (const other of bots.list) {
-          if (other.alive && other.team === 'reaver') out.push({ kind: 'bot', bot: other, x: other.group.position.x, y: 1.35, z: other.group.position.z });
+          if (other.alive && other.team === 'reaver') {
+            if (!other._target) other._target = { kind: 'bot', bot: other, x: 0, y: 0, z: 0 };
+            other._target.x = other.group.position.x;
+            other._target.y = 1.35;
+            other._target.z = other.group.position.z;
+            out.push(other._target);
+          }
         }
       }
       return out;
@@ -651,6 +676,7 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
       if (state.buyTime <= 0) {
         state.phase = 'live';
         state.phaseTime = 0;
+        state.liveStart = state.time;
         emit({ type: 'banner', title: `ROUND ${state.round}`, sub: 'Plant the charge at Site A or Site B', tone: 'info' });
       }
       return;
@@ -675,11 +701,11 @@ export function createSim({ scene, camera, world, player, weapon, bots, audio, r
     updateLightning(dt);
 
     // Last-man-standing grace: the moment the player becomes the only
-    // living sentinel, reavers hold for 3 s instead of instantly
+    // living sentinel, reavers hold for 5 s instead of instantly
     // converging — once per round, with a callout so it reads as a rule.
     if (player.state.alive && bots.aliveCount('sentinel') === 0 && !state.graceDone) {
       state.graceDone = true;
-      state.graceUntil = state.time + 3;
+      state.graceUntil = state.time + 5;
       emit({ type: 'killfeed', text: 'Last one standing — hold your ground!', team: 'sentinel' });
     }
     botEnv.graceUntil = state.graceUntil;

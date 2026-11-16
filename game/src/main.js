@@ -33,7 +33,7 @@ scene.fog = new THREE.Fog(new THREE.Color(PALETTE.canvas), 20, 62);
 const camera = new THREE.PerspectiveCamera(74, window.innerWidth / window.innerHeight, 0.05, 160);
 scene.add(camera);
 
-const world = createWorld(scene);
+const world = createWorld(scene, random);
 const player = createPlayer(world.colliders);
 const weapon = createWeapon(camera);
 const bots = createBots(scene, world, random);
@@ -119,6 +119,7 @@ function applyLighting() {
   world.moon.intensity = blackout ? 0.25 : 1.1;
   world.lampLight1.intensity = blackout ? 0 : 22;
   world.lampLight2.intensity = blackout ? 0 : 22;
+  world.lampLight3.intensity = blackout ? 0 : 22;
   // The fills and the lamp heads were never driven before: the warm south
   // fill and the cool north fill both die down in a blackout, so the mid
   // containers' north faces no longer go near-black in normal play.
@@ -317,6 +318,7 @@ function runShot(name) {
     sim.state.phase = 'live';
     sim.state.roundTime = 92;
     sim.state.buyTime = 0;
+    sim.state.liveStart = sim.state.time;
     settle(6);
     const reaver = bots.list.find((b) => b.team === 'reaver');
     // Open ground in front of the mid container: the old spot left the
@@ -365,18 +367,16 @@ function runShot(name) {
       }
     }
     const mates = bots.list.filter((b) => b.team === 'sentinel' && b.alive);
-    // Shoot from the pad's south edge, looking north across the pad at
-    // both survivors: the camera must stay WEST of the x=-14 market-hall
-    // wall (the south-east corner put it inside the hall's z=-4.5 wall
-    // and the frame was a flat dark wall). The open mid map, the lamp and
-    // the sky are the background now; the hall wall is only an edge.
-    // The A-sign pole sits due east of here, out of a north frame — the
-    // orange pad and the ROUND WON banner carry the site instead.
-    body.position.set(-15.5, 0, -5.8);
-    aimAt(-16.8, 1.2, -11);
+    // Shoot from south of the hall wall's south end, looking north across
+    // the pad at both survivors: the camera sits clear of the hall walls,
+    // the right-edge rays pass through the x=-14 wall gap, and the A-sign
+    // pole enters the frame right-of-centre. The open mid map, the lamp
+    // and the sky are the background; the west wall is lit, not a dark slab.
+    body.position.set(-15.5, 0, -1.5);
+    aimAt(-17.5, 1.2, -11);
     // Hold still for the frame, facing the camera, with Site A behind them.
     if (mates[0]) { mates[0].group.position.set(-15, 0, -8.5); mates[0].deployed = true; mates[0].state = 'hold'; mates[0].holdLeft = 30; mates[0].target = null; }
-    if (mates[1]) { mates[1].group.position.set(-19, 0, -11); mates[1].deployed = true; mates[1].state = 'hold'; mates[1].holdLeft = 30; mates[1].target = null; }
+    if (mates[1]) { mates[1].group.position.set(-20.5, 0, -10.5); mates[1].deployed = true; mates[1].state = 'hold'; mates[1].holdLeft = 30; mates[1].target = null; }
     // Face the camera: a bot's forward is its local -z, so the yaw that
     // looks at the camera is atan2 of the negated offset to it.
     for (const mate of mates) {
@@ -392,6 +392,10 @@ function runShot(name) {
     hud.reassertBanner();
     reassertEndFeed();
     settle(0.2);
+    // Lightning flash after the settle: updateLightning decays flash at
+    // 2.2/s during steps, so setting it before the settle would fade it
+    // out before the capture.
+    sim.state.flash = 0.5;
     hud.reassertBanner();
     reassertEndFeed();
   }

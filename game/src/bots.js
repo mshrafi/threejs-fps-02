@@ -145,6 +145,12 @@ export function createBots(scene, world, rng) {
       strafeDir: 1,
       strafeTimer: 0,
       reaction: 0.35 + rng() * 0.45,
+      // First-sight dwell: scans of continuous line of sight on a player
+      // target before the bot commits to engaging them (see scan block).
+      seenTime: 0,
+      // Time spent in the current engagement; botShoot ramps accuracy up
+      // over the first 5 s against the player (see sim.js botShoot).
+      engageTime: 0,
       // Roles make bots behave differently from each other: 'flanker' bots
       // take the long lane around the far side, 'regrouper' falls back to
       // heal when hurt instead of fighting to the death.
@@ -282,9 +288,10 @@ export function createBots(scene, world, rng) {
       let bestD = Infinity;
       const candidates = bot.deployed ? env.enemiesOf(bot, enemiesScratch) : enemiesScratch;
       if (bot.deployed) {
-        // Focus-fire cap: at most two reavers may have the player as their
-        // target. A third reaver that would pick the player falls back to
-        // the sentinels or the sites instead of joining a firing line.
+        // Focus-fire cap: at most one reaver may have the player as their
+        // target. A second reaver that would pick the player falls back to
+        // the sentinels or the sites instead of joining a firing line; the
+        // cap is re-evaluated every scan, so handover is automatic.
         let playerTargeters = 0;
         if (bot.team === 'reaver') {
           for (const other of list) {
@@ -292,7 +299,7 @@ export function createBots(scene, world, rng) {
           }
         }
         for (const enemy of candidates) {
-          if (enemy.kind === 'player' && playerTargeters >= 2) continue;
+          if (enemy.kind === 'player' && playerTargeters >= 1) continue;
           const dx = enemy.x - bot.group.position.x;
           const dz = enemy.z - bot.group.position.z;
           const d = Math.hypot(dx, dz);
@@ -309,18 +316,36 @@ export function createBots(scene, world, rng) {
       // stopping for — only a close one (under 12 m) makes it fight.
       if (best && bot.hasCharge && bestD > 12) best = null;
       if (best) {
-        bot.target = best;
-        if (bot.state !== 'engage' && bot.state !== 'defuse' && bot.state !== 'plant' && bot.state !== 'cover') {
-          bot.state = 'engage';
-          bot.stateTime = 0;
-          bot.shootTimer = bot.reaction;
-          bot.burstLeft = 0;
+        // First-sight dwell: a bot target engages at once, but a player
+        // target needs 4 consecutive scans (0.6 s) of continuous line of
+        // sight first — an idle player is no longer the easiest instant
+        // target in the round. A bot already engaging keeps its target,
+        // and losing sight before the dwell completes resets the count.
+        if (best.kind === 'player') bot.seenTime += SCAN_EVERY;
+        const alreadyEngaged = bot.state === 'engage' && bot.target && bot.target.kind === best.kind;
+        const dwellOk = best.kind !== 'player' || bot.seenTime >= 0.6 || alreadyEngaged;
+        if (dwellOk) {
+          if (!bot.target || bot.target.kind !== best.kind) bot.engageTime = 0;
+          bot.target = best;
+          if (bot.state !== 'engage' && bot.state !== 'defuse' && bot.state !== 'plant' && bot.state !== 'cover') {
+            bot.state = 'engage';
+            bot.stateTime = 0;
+            bot.engageTime = 0;
+            // First shot vs the player waits an extra 0.7 s: 1.65-2.1 s
+            // after first sight instead of 0.35-0.8 s.
+            bot.shootTimer = bot.reaction + (best.kind === 'player' ? 0.7 : 0);
+            bot.burstLeft = 0;
+          }
         }
       } else if (bot.state === 'engage') {
+        bot.seenTime = 0;
         bot.target = null;
         bot.state = 'advance';
         bot.stateTime = 0;
         if (bot.pathIndex >= bot.path.length) pickObjective(bot, env);
+      } else {
+        // Line of sight lost before committing: the dwell resets.
+        bot.seenTime = 0;
       }
     } else if (inGrace) {
       // Grace still consumes the scan timer so the bot does not scan the
@@ -433,6 +458,8 @@ export function createBots(scene, world, rng) {
         if (moveToward(bot, node[0], node[1], dt, bot.speed)) bot.pathIndex += 1;
       }
     } else if (bot.state === 'engage' && bot.target) {
+      // Accuracy ramps with sustained engagement (see sim.js botShoot).
+      bot.engageTime += dt;
       // Face the target, strafe between bursts, fire in bursts of 3-5.
       // At long range an engaged bot advances toward cover near the target
       // instead of strafing in place at its spawn.
